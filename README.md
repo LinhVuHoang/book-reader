@@ -85,7 +85,7 @@ Simple page retrieval requests bypass the LLM-based planning and evaluation stag
 
 ## 4. Database Design
 
-The database uses SQLite with two primary tables.
+The database uses SQLite with four tables: `books`, `pages`, `chunks`, and `page_chunk`.
 
 ### `books`
 
@@ -93,11 +93,16 @@ Stores book-level metadata.
 
 | Field | Description |
 |---|---|
-| `id` | Unique book identifier |
-| `title` | Book title |
-| `file_path` | Original PDF path |
-| `total_pages` | Total number of pages |
-| `created_at` | Ingestion timestamp |
+| `id` | Unique book identifier (`INTEGER PRIMARY KEY AUTOINCREMENT`) |
+| `title` | Book title (`NOT NULL`) |
+| `file_path` | Original PDF path (`NOT NULL`) |
+| `file_hash` | Unique file hash used to identify a book (`UNIQUE`, `NOT NULL`) |
+| `total_pages` | Total number of pages (`NOT NULL`, greater than 0) |
+| `status` | Current processing state (`NOT NULL`) |
+| `created_at` | Creation timestamp (defaults to `CURRENT_TIMESTAMP`) |
+| `updated_at` | Last update timestamp (defaults to `CURRENT_TIMESTAMP`) |
+
+Allowed `status` values are `pending`, `processing`, `completed`, `failed`, and `deleted`. `deleted` is a soft delete; books are not physically deleted during normal operations.
 
 ### `pages`
 
@@ -105,15 +110,42 @@ Stores extracted content at page level.
 
 | Field | Description |
 |---|---|
-| `id` | Unique page identifier |
-| `book_id` | Reference to the book |
-| `page_number` | Original PDF page number |
-| `content` | Extracted page text |
-| `method` | Extraction method: text extraction or OCR |
-| `confidence` | OCR confidence score |
-| `created_at` | Processing timestamp |
+| `id` | Unique page identifier (`INTEGER PRIMARY KEY AUTOINCREMENT`) |
+| `book_id` | Reference to `books.id` (`NOT NULL`, `ON DELETE CASCADE`) |
+| `page_number` | Original PDF page number (`NOT NULL`, greater than 0) |
+| `content` | Extracted page text (`NOT NULL`) |
+| `method` | Extraction method: `text` or `ocr` (`NOT NULL`) |
+| `confidence` | Confidence score for OCR results (`NULL` or between 0 and 1) |
+| `created_at` | Creation timestamp (defaults to `CURRENT_TIMESTAMP`) |
 
-Each page is associated with a book through `book_id`.
+Each page belongs to one book. `(book_id, page_number)` is unique. Native text extraction may have a `NULL` confidence.
+
+### `chunks`
+
+Stores ordered chunks spanning one or more pages of a book.
+
+| Field | Description |
+|---|---|
+| `id` | Unique chunk identifier (`INTEGER PRIMARY KEY AUTOINCREMENT`) |
+| `book_id` | Reference to `books.id` (`NOT NULL`, `ON DELETE CASCADE`) |
+| `chunk_index` | Order of the chunk within the book (`NOT NULL`) |
+| `content` | Chunk text (`NOT NULL`) |
+| `created_at` | Creation timestamp (defaults to `CURRENT_TIMESTAMP`) |
+
+Each chunk belongs to one book. `(book_id, chunk_index)` is unique.
+
+### `page_chunk`
+
+Stores the many-to-many relationship between pages and chunks, including the text span contributed by each page to a chunk.
+
+| Field | Description |
+|---|---|
+| `page_id` | Reference to `pages.id` (`NOT NULL`, `ON DELETE CASCADE`) |
+| `chunk_id` | Reference to `chunks.id` (`NOT NULL`, `ON DELETE CASCADE`) |
+| `start_offset` | Start character offset in `pages.content` (`NOT NULL`, at least 0) |
+| `end_offset` | End character offset in `pages.content` (`NOT NULL`, at least `start_offset`) |
+
+The composite primary key is `(page_id, chunk_id)`. A chunk can span multiple pages, and a page can contain multiple chunks. Offsets are relative to the corresponding `pages.content` and use Python Unicode string indexing.
 
 ## 5. MCP Tools
 
