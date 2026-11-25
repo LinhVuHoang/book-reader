@@ -2,5 +2,11 @@ data/
 *.db
 *.sqlite
 *.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite-journal
+*.sqlite3-journal
 __pycache__/
+*.py[cod]
 .pytest_cache/

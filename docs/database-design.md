@@ -4,7 +4,7 @@
 - **Date:** 2026-11-25
 - **Scope:** Chỉ tầng database. Không PDF/OCR/chunking/RAG/MCP/vector search.
 - **Nguồn ưu tiên:** `.opencode/skills/database/references/schema.md` > `ARCHITECTURE.md` > `AGENTS.md` > `README.md`.
-- Tài liệu này ghi nhận các quyết định từ `docs/exec-plans/active/0001-database-layer.md` và là nguồn quyết định khi triển khai.
+- Tài liệu này ghi nhận các quyết định từ `docs/exec-plans/active/database-layer.md` và là nguồn quyết định khi triển khai.
 
 ## 1. Các quyết định đã duyệt
 
@@ -82,6 +82,7 @@ Không tạo các index trùng:
 - `init_db.py` idempotent (`IF NOT EXISTS`), không drop/overwrite dữ liệu cũ.
 - `settings.DATABASE_PATH` là giá trị mặc định; `BOOK_READER_DB_PATH` có thể override; tham số `db_path` của repository có độ ưu tiên cao nhất.
 - `updated_at` được cập nhật khi repository đổi status của book.
+- `delete_book_physically()` chỉ phục vụ kiểm tra cascade/bảo trì; luồng nghiệp vụ dùng `soft_delete_book()`.
 - Không trộn logic PDF/OCR/chunking vào tầng database.
 
 ## 5. Kiểm tra
@@ -93,3 +94,48 @@ Không tạo các index trùng:
 ## 6. Phạm vi ngoài MVP
 
 Không implement vector search, embeddings, RAG, MCP, PDF extraction, OCR hay chunking trong phase này.
+
+## 7. Triển khai hiện tại
+
+| File | Vai trò |
+|---|---|
+| `config/settings.py` | `BASE_DIR`, `DEFAULT_DATABASE_PATH`, `DATABASE_PATH` từ env `BOOK_READER_DB_PATH` |
+| `src/database/connection.py` | `resolve_db_path()`, `connect()`, `database()` context manager; bật foreign keys và `sqlite3.Row` |
+| `src/database/init_db.py` | DDL 4 bảng + 1 index; `init_db(db_path=None)` và entry point `python -m src.database.init_db` |
+| `src/database/repository.py` | Dataclasses input/record, `DuplicateBookHashError` và toàn bộ SQL thao tác dữ liệu |
+| `tests/database/conftest.py` | Fixture DB tạm và book mẫu |
+| `tests/database/test_init_db.py` | Init lặp, FK, `CHECK(status)`, `CHECK(method)`, `CHECK(confidence)` |
+| `tests/database/test_repository.py` | Book/page/chunk CRUD, duplicate, soft delete, range, cascade |
+| `tests/database/test_relationships.py` | Quan hệ page-chunk, offsets độc lập, Unicode indexing |
+
+Repository API:
+
+- Book: `create_book()`, `get_book()`, `list_books()`, `update_book_status()`, `soft_delete_book()`.
+- Page: `insert_pages()`, `get_pages()`.
+- Chunk: `insert_chunks()`, `get_chunks()`.
+- Quan hệ: `insert_page_chunks()`, `get_chunks_for_page()`, `get_pages_for_chunk()`.
+- Bảo trì: `delete_book_physically()`.
+
+Mọi hàm đều nhận `db_path: Path | None = None`; `None` dùng `settings.DATABASE_PATH`. Không hàm nào dùng `INSERT ... ON CONFLICT`.
+
+## 8. Cách chạy
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -m src.database.init_db
+python -m pytest tests/
+```
+
+DB mặc định được tạo tại `data/book_reader.db`. Để dùng đường dẫn khác:
+
+```bash
+set BOOK_READER_DB_PATH=path\to\custom.db
+python -m src.database.init_db
+```
+
+## 9. Vấn đề còn tồn đọng
+
+- Chưa có cơ chế migration/versioning; `CREATE TABLE IF NOT EXISTS` không tự cập nhật schema của DB đã tồn tại.
+- `DATABASE_PATH` được resolve lúc import `config.settings`; đổi env sau khi import cần reload module hoặc khởi động lại process.
+- `CURRENT_TIMESTAMP` có độ chính xác theo giây; không phù hợp nếu cần timestamp mili-giây.
+- `delete_book_physically()` tồn tại để kiểm tra cascade; không được dùng trong luồng nghiệp vụ thông thường.
