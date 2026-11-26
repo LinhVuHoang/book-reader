@@ -1,4 +1,5 @@
 data/
+logs/
 *.db
 *.sqlite
 *.sqlite3

@@ -1,0 +1,84 @@
+from __future__ import annotations
+
+import logging
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+from src.ingestion.pdf_extractor import PageText
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class PageSpan:
+    page_number: int
+    start_offset: int
+    end_offset: int
+
+
+@dataclass(frozen=True)
+class ChunkSpec:
+    chunk_index: int
+    content: str
+    spans: list[PageSpan]
+
+
+def chunk_pages(
+    pages: Sequence[PageText], chunk_size: int, overlap_size: int
+) -> list[ChunkSpec]:
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be greater than 0")
+    if overlap_size < 0:
+        raise ValueError("overlap_size must not be negative")
+    if overlap_size >= chunk_size:
+        raise ValueError("overlap_size must be less than chunk_size")
+
+    book_text = "".join(page.content for page in pages)
+    if not book_text:
+        return []
+
+    page_ranges: list[tuple[int, int, int, str]] = []
+    cursor = 0
+    for page in pages:
+        start = cursor
+        end = start + len(page.content)
+        page_ranges.append((page.page_number, start, end, page.content))
+        cursor = end
+
+    step = chunk_size - overlap_size
+    chunks: list[ChunkSpec] = []
+    start = 0
+    chunk_index = 0
+    while start < len(book_text):
+        end = min(start + chunk_size, len(book_text))
+        content = book_text[start:end]
+        spans: list[PageSpan] = []
+        for page_number, page_start, page_end, page_content in page_ranges:
+            if not page_content:
+                continue
+            span_start = max(start, page_start)
+            span_end = min(end, page_end)
+            if span_start < span_end:
+                spans.append(
+                    PageSpan(
+                        page_number=page_number,
+                        start_offset=span_start - page_start,
+                        end_offset=span_end - page_start,
+                    )
+                )
+
+        chunks.append(
+            ChunkSpec(chunk_index=chunk_index, content=content, spans=spans)
+        )
+        chunk_index += 1
+        if end == len(book_text):
+            break
+        start += step
+
+    logger.debug(
+        "chunks created count=%d chunk_size=%d overlap_size=%d",
+        len(chunks),
+        chunk_size,
+        overlap_size,
+    )
+    return chunks
