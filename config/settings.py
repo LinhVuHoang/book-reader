@@ -26,7 +26,17 @@ def _env_int(name: str, default: int) -> int:
     return int(value) if value else default
 
 
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    return float(value) if value else default
+
+
 CHUNK_SIZE = _env_int("BOOK_READER_CHUNK_SIZE", 1000)
 CHUNK_OVERLAP = _env_int("BOOK_READER_CHUNK_OVERLAP", 200)
 LOG_LEVEL = os.getenv("BOOK_READER_LOG_LEVEL", "INFO")
 LOG_FILE = os.getenv("BOOK_READER_LOG_FILE", "logs/book_reader.log")
+
+OCR_LANGUAGES = os.getenv("BOOK_READER_OCR_LANGUAGES", "vie+eng")
+OCR_DPI = _env_int("BOOK_READER_OCR_DPI", 300)
+OCR_MIN_CONFIDENCE = _env_float("BOOK_READER_OCR_MIN_CONFIDENCE", 80.0)
+TESSERACT_CMD = os.getenv("TESSERACT_CMD") or None

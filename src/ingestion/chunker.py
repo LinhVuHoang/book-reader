@@ -2,25 +2,36 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass
 
-from src.ingestion.pdf_extractor import PageText
+from src.ingestion.models import ChunkSpec, PageSpan, PageText
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class PageSpan:
-    page_number: int
-    start_offset: int
-    end_offset: int
+def merge_pages(
+    native_pages: Sequence[PageText], ocr_pages: Sequence[PageText]
+) -> list[PageText]:
+    native = {page.page_number: page for page in native_pages}
+    ocr = {page.page_number: page for page in ocr_pages}
+    if len(native) != len(native_pages) or len(ocr) != len(ocr_pages):
+        raise ValueError("duplicate page numbers in input")
 
+    merged: list[PageText] = []
+    for number in sorted(set(native) | set(ocr)):
+        native_page = native.get(number)
+        ocr_page = ocr.get(number)
+        if native_page is None:
+            merged.append(ocr_page)
+        elif ocr_page is None:
+            merged.append(native_page)
+        elif native_page.content.strip():
+            merged.append(native_page)
+        else:
+            merged.append(ocr_page)
 
-@dataclass(frozen=True)
-class ChunkSpec:
-    chunk_index: int
-    content: str
-    spans: list[PageSpan]
+    if [page.page_number for page in merged] != list(range(1, len(merged) + 1)):
+        raise ValueError("page numbers must run from 1 to N without gaps")
+    return merged
 
 
 def chunk_pages(
@@ -32,6 +43,18 @@ def chunk_pages(
         raise ValueError("overlap_size must not be negative")
     if overlap_size >= chunk_size:
         raise ValueError("overlap_size must be less than chunk_size")
+
+    seen: set[int] = set()
+    previous_number = 0
+    for page in pages:
+        if not isinstance(page.content, str):
+            raise ValueError("page content must be a string")
+        if page.page_number in seen:
+            raise ValueError(f"duplicate page number: {page.page_number}")
+        if page.page_number <= previous_number:
+            raise ValueError("pages must be in increasing page_number order")
+        seen.add(page.page_number)
+        previous_number = page.page_number
 
     book_text = "".join(page.content for page in pages)
     if not book_text:
